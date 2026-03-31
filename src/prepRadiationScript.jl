@@ -33,7 +33,7 @@ end
 # ==========================================
 function process_glowpa_variable(input_dir, var_name, prefix_to_remove)
     monthly_files = filter(f -> endswith(f, ".nc"), readdir(input_dir))
-    
+
     if isempty(monthly_files)
         println("⚠️ No files found in $input_dir")
         return
@@ -63,21 +63,21 @@ function process_glowpa_variable(input_dir, var_name, prefix_to_remove)
         for m in 1:12
             # Find all Januarys, Februarys, etc., across the 10 years
             month_indices = findall(dt -> Dates.month(dt) == m, times)
-            
+
             # Calculate the mean for this specific month
             month_avg = mean(nc_raster[Ti(month_indices)], dims=Ti)
             month_2d = dropdims(month_avg, dims=Ti)
 
             # Resample to perfect routing grid alignment
             aligned = resample(month_2d, to=fd_master)
-            
+
             final_data = nothing
 
             # --- PHYSICS FILTERS ---
             if var_name == "rsds"
                 # SSRD: W/m² to kJ/m²/day
                 final_data = aligned .* 86.4f0
-                
+
             elseif var_name == "tas"
                 # TAS: Kelvin to Celsius (Floor at 0.0°C)
                 final_data = map(aligned) do val
@@ -85,7 +85,7 @@ function process_glowpa_variable(input_dir, var_name, prefix_to_remove)
                         return missing
                     else
                         celsius = val - 273.15f0
-                        return max(celsius, 0.0f0) 
+                        return max(celsius, 0.0f0)
                     end
                 end
             end
@@ -97,7 +97,7 @@ function process_glowpa_variable(input_dir, var_name, prefix_to_remove)
             month_str = lpad(m, 2, "0")
             file_prefix = var_name == "rsds" ? "ssrd" : "river_temperature"
             out_file = joinpath(out_dir_glowpa, "$(file_prefix)_m$(month_str).tif")
-            
+
             # Save
             write(out_file, data_clean, force=true)
         end

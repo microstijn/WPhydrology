@@ -19,7 +19,7 @@ out_dir    = raw"C:\Users\peete074\Documents\hydroOut"
 # ==========================================
 println("Setting up Master Routing Grid...")
 f_flowdir = joinpath(dataFolder, raw"D:\WPhydrologyOut\routing\flowdir.tif")
-fd_master = Raster(f_flowdir) 
+fd_master = Raster(f_flowdir)
 
 # Ensure North-Up orientation for GloWPa
 y_coords = lookup(fd_master, Y)
@@ -48,7 +48,7 @@ runoff_files = filter(f -> startswith(f, "monthly_runoff") && endswith(f, ".nc.t
 for r_file in runoff_files
     # --- A. Extract Scenario Name ---
     # Removes the prefix and suffix to isolate the exact Model_SSP_Decade string
-    # e.g., turns "monthly_runoff_GFDL-ESM4_ssp126_2021_2030.nc.txt" 
+    # e.g., turns "monthly_runoff_GFDL-ESM4_ssp126_2021_2030.nc.txt"
     # into "GFDL-ESM4_ssp126_2021_2030"
     scenario_name = replace(r_file, "monthly_runoff_" => "")
     scenario_name = replace(scenario_name, ".nc.txt" => "")
@@ -77,7 +77,7 @@ for r_file in runoff_files
 
     # --- D. 12-Month Climatology & Hydraulics ---
     println("   Averaging to 12-month climatology and calculating hydraulics...")
-    
+
     # Create scenario-specific output folders
     out_dir_scenario = joinpath(out_dir, scenario_name)
     paths = ["runoff", "discharge", "river_depth", "river_restime"]
@@ -89,7 +89,7 @@ for r_file in runoff_files
     for m in 1:12
         # Find all time indices that match this specific month across the 10 years
         month_indices = findall(x -> Dates.month(x.date) == m, ts_runoff)
-        
+
         # Average the rasters for this month across all years
         r_avg = mean([ts_runoff[idx].raster for idx in month_indices])
         b_avg = mean([ts_baseflow[idx].raster for idx in month_indices])
@@ -110,7 +110,7 @@ for r_file in runoff_files
         write(joinpath(out_dir_scenario, "river_depth", "river_depth_m$(month_str).tif"), dep_out, force=true)
         write(joinpath(out_dir_scenario, "river_restime", "river_restime_m$(month_str).tif"), res_out, force=true)
     end
-    
+
     println("   ✅ Saved 12 monthly climatology files to $out_dir_scenario")
 end
 
