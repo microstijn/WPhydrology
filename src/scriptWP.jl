@@ -9,6 +9,7 @@ dataFolder = raw"D:\OneDrive_1_12-2-2026"
 # set packages
 using WPhydrology
 using Rasters, Dates
+using ArchGDAL
 
 # set filenames
 f_runoff    = "monthly_runoff_GFDL-ESM4_ssp126_2015_2020.nc.txt"
@@ -46,6 +47,7 @@ fd_master = Raster(f_flowdir)
 # I noticed the y direction can be flipped. To ensure we have the Glowpa desired orientation
 # which is north up I added this check. 
 y_coords = lookup(fd_master, Y)
+
 if y_coords[1] < y_coords[end]
     fd_master = reverse(fd_master, dims=Y)
     write(joinpath(out_dir, "routing", "flowdir.tif"), fd_master)
@@ -53,7 +55,7 @@ end
 # flow accumlation from VIC input
 # need archdal to write to file
 acc = compute_flow_accumulation(fd_master)
-using ArchGDAL
+
 write(joinpath(out_dir, "routing", "flowacc.tif"), acc)
 
 # Load and parse
