@@ -6,6 +6,9 @@ using CSV
 using DataFrames
 using DimensionalData # Required for explicit Intervals/Center definitions
 
+import DimensionalData.Dimensions.Lookups.Intervals
+import DimensionalData.Dimensions.Lookups.Center
+
 # --- HELPER: Create a robust grid for testing ---
 function mock_grid(vals::Matrix, start_val=10.0, res=1.0)
     # We start at 10.0 to avoid 0.0 edge cases.
