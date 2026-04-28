@@ -1,5 +1,42 @@
 using Rasters, Distances, Dates
 
+using DimensionalData.Dimensions.Lookups
+
+
+"""
+    format_for_glowpa(r::Raster)
+Dynamically pads a cropped raster into a full global 720x360 raster,
+shifts the coordinate lookups to Intervals(Start()), and ensures
+missing values are strictly recorded as `missing`.
+"""
+function format_for_glowpa(r::Raster)
+    # calculate the Y placement
+    y_lookups = lookup(r, Y)
+    res = abs(step(y_lookups)) # Should be 0.5
+    
+    # Since 'r' uses Center(), the true top edge is half a pixel north of the first center point
+    top_edge = first(y_lookups) + (res / 2.0)
+    
+    # Global grid starts exactly at 90.0°N. Calculate how many rows down we need to start.
+    row_start = round(Int, (90.0 - top_edge) / res) + 1
+    row_end   = row_start + size(r, Y) - 1
+
+    # Create a blank global matrix filled with `missing`
+    global_data = Matrix{Union{Float32, Missing}}(missing, 720, 360)
+
+    # Clean the data
+    clean_data = map(x -> isnothing(x) || isnan(x) ? missing : Float32(x), r)
+
+    # Paste into the rows!
+    global_data[:, row_start:row_end] .= clean_data
+
+    # Define expected GloWPa coordinates
+    x_dim = X(range(-180.0, step=0.5, length=720); sampling=Intervals(Start()))
+    y_dim = Y(range(89.5, step=-0.5, length=360); sampling=Intervals(Start()))
+
+    return Raster(global_data, (x_dim, y_dim); missingval=missing)
+end
+
 """
     compute_glowpa_month(runoff_mm, baseflow_mm, discharge_m3s, flowdir, days)
 Returns (Runoff_rate, Depth, Residence_Time).
@@ -10,7 +47,17 @@ function compute_glowpa_month(r_m::Raster, bf_m::Raster, q_m::Raster, fd::Raster
     haversine = Haversine(EARTH_RADIUS)
     
     # Runoff (Total mm -> mm/day)
-    glowpa_runoff = (r_m .+ bf_m) ./ days
+    # Safely handle missing/negative no-data values to prevent negative leaks
+    glowpa_runoff = map(r_m, bf_m) do r, b
+        # If either value is technically missing, or if they are a negative NoData flag
+        if ismissing(r) || ismissing(b) || r < 0.0 || b < 0.0
+            # You can return 0.0f0, or 'missing' depending on what your write function expects.
+            # Using missing is usually safer for final GeoTIFF writes.
+            return missing 
+        else
+            return Float32((r + b) / days)
+        end
+    end
     
     depth = zeros(Float32, size(fd))
     restime = zeros(Float32, size(fd))

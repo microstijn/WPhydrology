@@ -34,18 +34,23 @@ function parse_climate_timeseries(filepath::String, master_grid::Raster)
         # Get raw values
         raw_vals = df[:, col_name]
         
-        # CLEAN THE DATA
+        # Clean the data
         clean_vals = map(x -> ismissing(x) || isnan(x) || x < 0 ? 0.0f0 : Float32(x), raw_vals)
         
-        # Rasterize 
-        r = rasterize(
-            points; 
-            to = master_grid, 
-            values = clean_vals,
-            op = +, 
-            missingval = -9999.0f0, 
-            fill = 0.0f0 
-        )
+        # Initialize a new raster for this time step, filled with 0.0f0
+        r = map(x -> 0.0f0, master_grid) 
+        
+        # set points in raster
+        for (lon, lat, val) in zip(df.Longitude, df.Latitude, clean_vals)
+            try
+                # Use Contains() to find the correct grid cell and add the value
+                r[X(Contains(lon)), Y(Contains(lat))] += val
+            catch e
+                # If a coordinate in the CSV falls completely outside the master_grid,
+                # Rasters.jl throws a SelectorError. ignore it.
+                continue
+            end
+        end
         
         push!(results, (date=dt, raster=r))
     end

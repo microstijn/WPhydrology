@@ -9,8 +9,9 @@ using WPhydrology
 using Rasters, Dates, Statistics
 using ArchGDAL
 using NCDatasets
-
+using Base.Threads
 # Set directories
+
 dataFolder = raw"C:\Users\peete074\Documents\hydro"
 out_dir    = raw"C:\Users\peete074\Documents\hydroOut"
 
@@ -45,38 +46,50 @@ write(joinpath(routing_dir, "flowacc.tif"), acc)
 all_files = readdir(dataFolder)
 runoff_files = filter(f -> startswith(f, "monthly_runoff") && endswith(f, ".nc.txt"), all_files)
 
-for r_file in runoff_files
+# Create a lock for clean console output during multithreading
+io_lock = ReentrantLock()
+
+println("\n🚀 Starting multithreaded processing across $(Threads.nthreads()) threads...")
+
+Threads.@threads for r_file in runoff_files
     # --- A. Extract Scenario Name ---
     # Removes the prefix and suffix to isolate the exact Model_SSP_Decade string
-    # e.g., turns "monthly_runoff_GFDL-ESM4_ssp126_2021_2030.nc.txt"
-    # into "GFDL-ESM4_ssp126_2021_2030"
     scenario_name = replace(r_file, "monthly_runoff_" => "")
     scenario_name = replace(scenario_name, ".nc.txt" => "")
 
-    println("\n=== Processing Scenario: $scenario_name ===")
+    lock(io_lock) do
+        println("\n=== Processing Scenario: $scenario_name ===")
+    end
 
     # --- B. Find Matching Variable Files ---
     b_file = replace(r_file, "monthly_runoff" => "monthly_baseflow")
     q_file = replace(r_file, "monthly_runoff" => "monthly_discharge")
 
     if !isfile(joinpath(dataFolder, b_file)) || !isfile(joinpath(dataFolder, q_file))
-        println("   ❌ Missing matching baseflow or discharge for $scenario_name. Skipping.")
+        lock(io_lock) do
+            println("   ❌ Missing matching baseflow or discharge for $scenario_name. Skipping.")
+        end
         continue
     end
 
     # --- C. Load and Parse ---
-    println("   Parsing text files...")
+    lock(io_lock) do
+        println("   Parsing text files for $scenario_name...")
+    end
+    
     ts_runoff    = parse_climate_timeseries(joinpath(dataFolder, r_file), fd_master)
     ts_baseflow  = parse_climate_timeseries(joinpath(dataFolder, b_file), fd_master)
     ts_discharge = parse_climate_timeseries(joinpath(dataFolder, q_file), fd_master)
 
-    # Sanity check: Ensure all three files have the same number of time steps (e.g., 120 months)
+    # Sanity check
     if length(ts_runoff) != length(ts_baseflow) || length(ts_runoff) != length(ts_discharge)
-        error("   ❌ Mismatch in number of months between variables!")
+        error("   ❌ Mismatch in number of months between variables for $scenario_name!")
     end
 
     # --- D. 12-Month Climatology & Hydraulics ---
-    println("   Averaging to 12-month climatology and calculating hydraulics...")
+    lock(io_lock) do
+        println("   Averaging to 12-month climatology and calculating hydraulics for $scenario_name...")
+    end
 
     # Create scenario-specific output folders
     out_dir_scenario = joinpath(out_dir, scenario_name)
@@ -95,11 +108,16 @@ for r_file in runoff_files
         b_avg = mean([ts_baseflow[idx].raster for idx in month_indices])
         q_avg = mean([ts_discharge[idx].raster for idx in month_indices])
 
-        # Get days in this month (using a non-leap year 2015 as a standard reference)
+        # Get days in this month
         days = daysinmonth(Date(2015, m, 1))
 
-        # Compute hydraulics (Runoff Rate, Depth, Velocity/Restime)
+        # Compute hydraulics
         ro_out, dep_out, res_out = compute_glowpa_month(r_avg, b_avg, q_avg, fd_master, days)
+
+        ro_out  = format_for_glowpa(ro_out)
+        q_avg   = format_for_glowpa(q_avg)
+        dep_out = format_for_glowpa(dep_out)
+        res_out = format_for_glowpa(res_out)
 
         # Format string strictly as m01, m02 for GloWPa-R
         month_str = lpad(m, 2, "0")
@@ -111,7 +129,9 @@ for r_file in runoff_files
         write(joinpath(out_dir_scenario, "river_restime", "river_restime_m$(month_str).tif"), res_out, force=true)
     end
 
-    println("   ✅ Saved 12 monthly climatology files to $out_dir_scenario")
+    lock(io_lock) do
+        println("   ✅ Saved 12 monthly climatology files to $out_dir_scenario")
+    end
 end
 
 println("\n🎉 All hydrology scenarios processed and separated successfully!")

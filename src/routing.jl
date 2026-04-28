@@ -14,7 +14,7 @@ function compute_flow_accumulation(fd::Raster)
     # Build graph
     for I in CartesianIndices(fd)
         val = fd[I]
-        if ismissing(val); continue; end # Skip missing
+        if ismissing(val) || val < 0; continue; end # Skip missing or NoData flags
         
         f_dir = Int(val)
         src_idx = LinearIndices(fd)[I]
@@ -36,9 +36,8 @@ function compute_flow_accumulation(fd::Raster)
     # Initialize with missings, then set valid cells to 1.0
     acc = Array{Union{Float32, Missing}}(missing, length(fd))
     
-    # Only set 'acc' to 1.0 if the input 'fd' was not missing
-    for I in 1:length(fd)
-        if !ismissing(fd[I])
+    for I in 1:length(fd) # i prefer length although i know it's not the most efficient way to loop through a raster, but it is the most straightforward
+        if !ismissing(fd[I]) && fd[I] >= 0
             acc[I] = 1.0f0
         end
     end
@@ -46,11 +45,19 @@ function compute_flow_accumulation(fd::Raster)
     while !isempty(queue)
         u = popfirst!(queue)
         v = downstream[u]
-        # Only accumulate if v is a valid downstream neighbor
-        if v != 0 && v != u && !ismissing(acc[v]) && !ismissing(acc[u])
-            acc[v] += acc[u]
+        
+        # Only proceed if it flows to a valid, different cell
+        if v != 0 && v != u
+            # graph traversal steps
             in_degree[v] -= 1
-            if in_degree[v] == 0; push!(queue, v); end
+            if in_degree[v] == 0
+                push!(queue, v)
+            end
+            
+            # if the data is valid do math, otherwise keep it missing
+            if !ismissing(acc[v]) && !ismissing(acc[u])
+                acc[v] += acc[u]
+            end
         end
     end
     

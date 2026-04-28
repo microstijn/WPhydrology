@@ -68,12 +68,13 @@ function verify_output(generated_path::String, expected_path::String)
         end
 
         # Check Axis Flipping (Order)
-        if order(x_gen) != order(x_exp)
-            println("  ❌ X Axis Order mismatch: Generated $(order(x_gen)) vs Expected $(order(x_exp))")
+        # Use DimensionalData.order to avoid collision with DataFrames.order
+        if DimensionalData.order(x_gen) != DimensionalData.order(x_exp)
+            println("  ❌ X Axis Order mismatch: Generated $(DimensionalData.order(x_gen)) vs Expected $(DimensionalData.order(x_exp))")
             passed = false
         end
-        if order(y_gen) != order(y_exp)
-            println("  ❌ Y Axis Order mismatch: Generated $(order(y_gen)) vs Expected $(order(y_exp))")
+        if DimensionalData.order(y_gen) != DimensionalData.order(y_exp)
+            println("  ❌ Y Axis Order mismatch: Generated $(DimensionalData.order(y_gen)) vs Expected $(DimensionalData.order(y_exp))")
             passed = false
         end
 
@@ -82,15 +83,18 @@ function verify_output(generated_path::String, expected_path::String)
         passed = false
     end
 
+
     # 3. Missing Value Types
     mv_gen = missingval(r_gen)
     mv_exp = missingval(r_exp)
-    # They don't strictly have to match in type if they are semantically both handled via `missing` but it's good to know.
-    if ismissing(mv_gen) && ismissing(mv_exp)
+    
+    if isnothing(mv_gen) && isnothing(mv_exp)
+        println("  ✅ Missing values match (both 'nothing')")
+    elseif ismissing(mv_gen) && ismissing(mv_exp)
         println("  ✅ Missing values match (both 'missing')")
-    elseif isnan(mv_gen) && isnan(mv_exp)
+    elseif (mv_gen isa Number && isnan(mv_gen)) && (mv_exp isa Number && isnan(mv_exp))
         println("  ✅ Missing values match (both 'NaN')")
-    elseif mv_gen != mv_exp
+    elseif !isequal(mv_gen, mv_exp)
         println("  ⚠️ Warning: Missing value mismatch: Generated $(mv_gen) vs Expected $(mv_exp)")
     end
 
@@ -171,21 +175,154 @@ function run_all_verifications(generated_dir::String, expected_dir::String, date
     return all_passed
 end
 
-# Check if script is run directly
-if abspath(PROGRAM_FILE) == @__FILE__
-    # Default parameters based on scriptWP.jl layout
-    gen_dir = raw"D:\WPhydrologyOut"
-    exp_dir = joinpath(@__DIR__, "..", "hydrology")
+"""
+    verify_scenario_month(scenario_dir, expected_dir, month_str)
+Runs verification for runoff, discharge, river_depth, and river_restime for a specific month.
+"""
+function verify_scenario_month(scenario_dir::String, expected_dir::String, month_str::String)
 
-    # Check if user provided arguments
-    if length(ARGS) >= 2
-        gen_dir = ARGS[1]
-        exp_dir = ARGS[2]
+    
+    # Define paths based on your new clean output structure
+    paths = [
+        (
+            joinpath(scenario_dir, "runoff", "runoff_$(month_str).tif"),
+            joinpath(expected_dir, "runoff", "runoff_daymonmean_$(month_str).tif")
+        ),
+        (
+            joinpath(scenario_dir, "discharge", "discharge_$(month_str).tif"),
+            joinpath(expected_dir, "discharge", "discharge_monmean_$(month_str).tif")
+        ),
+        (
+            joinpath(scenario_dir, "river_depth", "river_depth_$(month_str).tif"),
+            joinpath(expected_dir, "rdepth", "rdepth_monmean_$(month_str).tif") # Note the rdepth folder name!
+        ),
+        (
+            joinpath(scenario_dir, "river_restime", "river_restime_$(month_str).tif"),
+            joinpath(expected_dir, "river_restime", "river_restime_monmean_$(month_str).tif")
+        )
+    ]
+
+    all_passed = true
+    for (gen_path, exp_path) in paths
+        if !verify_output(gen_path, exp_path)
+            all_passed = false
+        end
+    end
+    return all_passed
+end
+
+
+"""
+    run_batch_verifications(generated_base_dir, expected_dir)
+Finds all scenario folders and verifies all 12 months for each.
+"""
+function run_batch_verifications(generated_base_dir::String, expected_dir::String)
+    # Get all items in the generated directory
+    items = readdir(generated_base_dir, join=true)
+    
+    # Filter for directories, and explicitly ignore the "routing" static map folder
+    scenario_dirs = filter(x -> isdir(x) && basename(x) != "routing", items)
+
+    if isempty(scenario_dirs)
+        println("❌ No scenario folders found in $generated_base_dir")
+        return
     end
 
-    # For testing, we can check 2015_01 against m01
-    date_str = length(ARGS) >= 3 ? ARGS[3] : "2015_01"
-    month_str = length(ARGS) >= 4 ? ARGS[4] : "m01"
+    total_scenarios = length(scenario_dirs)
+    failed_scenarios = String[]
 
-    run_all_verifications(gen_dir, exp_dir, date_str, month_str)
+    println("\n🚀 STARTING BATCH VERIFICATION FOR $total_scenarios SCENARIOS")
+
+    for scenario_dir in scenario_dirs
+        scenario_name = basename(scenario_dir)
+        println("\n=========================================================")
+        println("🔍 SCENARIO: $scenario_name")
+        println("=========================================================")
+
+        scenario_passed = true
+
+        # Loop through months 1 to 12
+        for m in 1:12
+            month_str = "m" * lpad(m, 2, "0") # Formats as m01, m02, etc.
+            
+            println("\n--- Checking Month: $month_str ---")
+            month_passed = verify_scenario_month(scenario_dir, expected_dir, month_str)
+            
+            if !month_passed
+                scenario_passed = false
+            end
+        end
+
+        if !scenario_passed
+            push!(failed_scenarios, scenario_name)
+        end
+    end
+
+    # --- Final Batch Summary ---
+    println("\n=========================================================")
+    println("📊 BATCH VERIFICATION SUMMARY")
+    println("=========================================================")
+    if isempty(failed_scenarios)
+        println("🎉 PERFECT RUN! All $(total_scenarios) scenarios passed completely.")
+    else
+        println("🛑 SOME FAILURES DETECTED.")
+        println("   Passed: $(total_scenarios - length(failed_scenarios))")
+        println("   Failed: $(length(failed_scenarios))")
+        println("\nScenarios with errors:")
+        for failed in failed_scenarios
+            println("  - $failed")
+        end
+    end
+    println("=========================================================\n")
 end
+
+
+# ==========================================
+# EXECUTION BLOCK
+# ==========================================
+
+# Edit these default paths to match your current system
+gen_base_dir = raw"C:\Users\peete074\Documents\hydroOut"
+exp_dir      = joinpath(@__DIR__, "..", "hydrology")
+# Override via command line if needed
+if length(ARGS) >= 2
+    gen_base_dir = ARGS[1]
+    exp_dir      = ARGS[2]
+end
+run_batch_verifications(gen_base_dir, exp_dir)
+
+
+
+
+
+
+
+# Default parameters based on scriptWP.jl layout
+gen_dir = raw"C:\Users\peete074\Documents\hydroOut"
+exp_dir = joinpath(@__DIR__, "..", "hydrology")
+# Check if user provided arguments
+if length(ARGS) >= 2
+    gen_dir = ARGS[1]
+    exp_dir = ARGS[2]
+end
+# For testing, we can check 2015_01 against m01
+date_str = length(ARGS) >= 3 ? ARGS[3] : "2021_01"
+month_str = length(ARGS) >= 4 ? ARGS[4] : "m01"
+import ArchGDAL
+run_all_verifications(gen_dir, exp_dir, date_str, month_str)
+
+
+# Edit these to point exactly to wherever your current test files are sitting.
+gen_file = raw"C:\Users\peete074\Documents\hydroOut\GFDL-ESM4_ssp126_2021_2030\runoff\runoff_m02.tif" # Example: wherever it actually landed
+exp_file = joinpath(@__DIR__, "..", "hydrology", "runoff", "runoff_daymonmean_m01.tif")
+# 2. Allow overriding via command line arguments so you can quickly test different 
+# files from the terminal without editing the script every time.
+if length(ARGS) >= 2
+    gen_file = ARGS[1]
+    exp_file = ARGS[2]
+end
+
+# Run the check on just this single pair
+verify_output(gen_file, exp_file)
+
+println("=========================================================\n")
